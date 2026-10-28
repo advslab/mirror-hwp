@@ -1,0 +1,113 @@
+name: source walk
+
+# Keeps one rolling release (tag `data`) of the vendor's security bulletins
+# in English: bulletins-YYYY.ndjson.gz per year of the row's creation date
+# (its last-updated date when it has none; bulletins-undated.ndjson.gz when
+# it has neither), one line per bulletin with the listing's raw row, which
+# listing it came from and the document content call's answer as served,
+# indexed by state.json, written last. Every run reads both listings whole,
+# merges them (a bulletin in both once, the current row winning) and
+# fetches the documents not held, whose last-updated time moved or whose
+# year changed (with `full` true, every document); a year's file is
+# uploaded only when one of its bulletins changed. A run cools down when the source fails the same way
+# 8 calls in a row, stops at its time budget, and publishes what it has.
+#
+# Chaining: when a run ends with work left (its budget, or an error other
+# than a stall) and `chain` is above 0, it dispatches one follow-up run with
+# chain - 1. The concurrency group keeps runs one at a time.
+#
+# Set the repository secrets LISTING_CURRENT_URL, LISTING_ARCHIVE_URL (the
+# two listings' addresses) and DOCUMENT_API_URL (the document content call)
+# (Settings → Secrets and variables → Actions → Secrets); they are masked in every log.
+on:
+  schedule:
+    - cron: "10 5 * * *"
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: "how many follow-up runs may still follow this one"
+        required: false
+        default: "1"
+      budget:
+        description: "minutes the walk may run"
+        required: false
+        default: "60"
+      pace:
+        description: "seconds between requests"
+        required: false
+        default: "1"
+      cooldown:
+        description: "minutes to wait after 8 calls in a row failed the same way (default 30)"
+        required: false
+        default: ""
+      full:
+        description: "true fetches every listed document again"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: walk
+  cancel-in-progress: false
+
+jobs:
+  walk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: refuse without the source secrets
+        env:
+          LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
+          LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
+          DOCUMENT_API_URL: ${{ secrets.DOCUMENT_API_URL }}
+        run: |
+          missing=0
+          for n in LISTING_CURRENT_URL LISTING_ARCHIVE_URL DOCUMENT_API_URL; do
+            if [ -z "${!n}" ]; then echo "::error::repository secret $n is not set"; missing=1; fi
+          done
+          exit $missing
+      - name: walk
+        id: walk
+        env:
+          LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
+          LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
+          DOCUMENT_API_URL: ${{ secrets.DOCUMENT_API_URL }}
+          BUDGET: ${{ inputs.budget || '60' }}
+          PACE: ${{ inputs.pace || '1' }}
+          COOLDOWN: ${{ inputs.cooldown }}
+          FULL: ${{ inputs.full }}
+          CHAIN: ${{ inputs.chain || '1' }}
+          RELEASE_TAG: data
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+          SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
+          SPACES_KEY: ${{ secrets.SPACES_KEY }}
+          SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
+          SPACES_REGION: sgp1
+        run: |
+          chmod +x bin/source-walk
+          sha256sum bin/source-walk
+          bin/source-walk
+          more=$(sed -n 's/^more=//p' "$GITHUB_OUTPUT" | tail -n 1)
+          if [ "$more" != true ] || [ "$CHAIN" -le 0 ]; then
+            echo "chain: no follow-up run requested (more=${more:-unset}, chain=$CHAIN)"
+          fi
+      - name: chain
+        if: ${{ success() && steps.walk.outputs.more == 'true' && fromJSON(inputs.chain || '1') > 0 }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHAIN: ${{ inputs.chain || '1' }}
+          BUDGET: ${{ inputs.budget || '60' }}
+          PACE: ${{ inputs.pace || '1' }}
+          COOLDOWN: ${{ inputs.cooldown }}
+          FULL: ${{ inputs.full }}
+        run: |
+          left=$((CHAIN - 1))
+          gh workflow run source-walk.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f chain="$left" -f budget="$BUDGET" -f pace="$PACE" -f cooldown="$COOLDOWN" -f full="$FULL"
+          echo "chain: follow-up run requested; $left more may follow it"
