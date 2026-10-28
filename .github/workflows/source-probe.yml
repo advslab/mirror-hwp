@@ -2,10 +2,11 @@ name: source probe
 
 # Weekly and manual. Checks from a runner what the source answers to a plain
 # fetch: the two listings and the first five documents the current listing
-# names; reports each call's status, size, timing, server header and row
+# names (the content call first, then the page and API variants); reports
+# each call's status, size, timing, server header and row
 # count. A refusal is reported, not worked around. Stores nothing.
-# Set the three repository secrets LISTING_CURRENT_URL, LISTING_ARCHIVE_URL
-# and DOCUMENT_BASE (Settings → Secrets and variables → Actions → Secrets);
+# Set the four repository secrets LISTING_CURRENT_URL, LISTING_ARCHIVE_URL,
+# DOCUMENT_BASE and DOCUMENT_API_URL (Settings → Secrets and variables → Actions → Secrets);
 # they are masked in every log.
 on:
   workflow_dispatch:
@@ -28,9 +29,10 @@ jobs:
           LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
           LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
           DOCUMENT_BASE: ${{ secrets.DOCUMENT_BASE }}
+          DOCUMENT_API_URL: ${{ secrets.DOCUMENT_API_URL }}
         run: |
           missing=0
-          for n in LISTING_CURRENT_URL LISTING_ARCHIVE_URL DOCUMENT_BASE; do
+          for n in LISTING_CURRENT_URL LISTING_ARCHIVE_URL DOCUMENT_BASE DOCUMENT_API_URL; do
             if [ -z "${!n}" ]; then echo "::error::repository secret $n is not set"; missing=1; fi
           done
           exit $missing
@@ -39,6 +41,7 @@ jobs:
           LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
           LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
           DOCUMENT_BASE: ${{ secrets.DOCUMENT_BASE }}
+          DOCUMENT_API_URL: ${{ secrets.DOCUMENT_API_URL }}
           PACE: ${{ inputs.pace }}
         run: |
           chmod +x bin/source-probe
