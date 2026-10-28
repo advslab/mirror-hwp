@@ -1,0 +1,46 @@
+name: source probe
+
+# Weekly and manual. Checks from a runner what the source answers to a plain
+# fetch: the two listings and the first five documents the current listing
+# names; reports each call's status, size, timing, server header and row
+# count. A refusal is reported, not worked around. Stores nothing.
+# Set the three repository secrets LISTING_CURRENT_URL, LISTING_ARCHIVE_URL
+# and DOCUMENT_BASE (Settings → Secrets and variables → Actions → Secrets);
+# they are masked in every log.
+on:
+  workflow_dispatch:
+    inputs:
+      pace:
+        description: "seconds between requests"
+        required: false
+        default: "1"
+  schedule:
+    - cron: "17 5 * * 1"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: refuse without the source secrets
+        env:
+          LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
+          LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
+          DOCUMENT_BASE: ${{ secrets.DOCUMENT_BASE }}
+        run: |
+          missing=0
+          for n in LISTING_CURRENT_URL LISTING_ARCHIVE_URL DOCUMENT_BASE; do
+            if [ -z "${!n}" ]; then echo "::error::repository secret $n is not set"; missing=1; fi
+          done
+          exit $missing
+      - name: probe
+        env:
+          LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
+          LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
+          DOCUMENT_BASE: ${{ secrets.DOCUMENT_BASE }}
+          PACE: ${{ inputs.pace }}
+        run: |
+          chmod +x bin/source-probe
+          sha256sum bin/source-probe
+          bin/source-probe
