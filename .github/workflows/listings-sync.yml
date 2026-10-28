@@ -1,0 +1,57 @@
+name: listings sync
+
+# Copies the source's two bulletin listings into a rolling release (tag
+# `listings`): current.json and archive.json byte for byte as served, indexed
+# by state.json (per file: size, sha256, row count, copy and check times, the
+# reason the last run kept it). A listing that is not answered, is not the
+# expected envelope, or has fewer than 90% of the rows held keeps its previous
+# file with the reason noted; unchanged bytes are not uploaded again. Every 6
+# hours.
+#
+# Set the repository secrets LISTING_CURRENT_URL and LISTING_ARCHIVE_URL
+# (Settings → Secrets and variables → Actions → Secrets); they are masked in
+# every log.
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: listings
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: refuse without the source secrets
+        env:
+          LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
+          LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
+        run: |
+          missing=0
+          for n in LISTING_CURRENT_URL LISTING_ARCHIVE_URL; do
+            if [ -z "${!n}" ]; then echo "::error::repository secret $n is not set"; missing=1; fi
+          done
+          exit $missing
+      - name: sync
+        env:
+          LISTING_CURRENT_URL: ${{ secrets.LISTING_CURRENT_URL }}
+          LISTING_ARCHIVE_URL: ${{ secrets.LISTING_ARCHIVE_URL }}
+          RELEASE_TAG: listings
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+          SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
+          SPACES_KEY: ${{ secrets.SPACES_KEY }}
+          SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
+          SPACES_REGION: sgp1
+        run: |
+          chmod +x bin/listings-sync
+          sha256sum bin/listings-sync
+          bin/listings-sync
